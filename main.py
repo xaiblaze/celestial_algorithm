@@ -1,100 +1,116 @@
 '''
 Purpose: find date when Jupiter and Saturn are both in the sky
-         during the morning
+         during the afternoon (15:30 local time)
 
-need: precise location
+Requirements:
+- Accurate rise/set visibility windows
+- DST-aware timezone handling
+- Ensure rise/set belong to the same cycle
 
-given a rise and set time, is the need time inside?
-
-
-return all dates where both J and S are in the sky at 15:30
- -  return dates with J and S separately
- -  return union
-
-
- alternate: return dates of Jupiter and Saturn aphelion? Unlikely they'll coincide
-
+Returns:
+- Dates when Jupiter and Saturn are visible at 15:30
+- Individual visibility sets
+- Their intersection
 '''
 
-
 from astronomy import *
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 def isBetween(cur, start, end):
+    """Check if `cur` is between `start` and `end`, accounting for overnight spans."""
     if start <= end:
         return start <= cur <= end
     else:
-        # The object is up across midnight
         return cur >= start or cur <= end
 
 def planetDays(iBody: Body, location: dict, wedding: dict) -> set:
-
     planet_set = set()
 
-    iObserver = Observer(location["lat"], 
-                         location["long"],
-                         location["height"])
-    iDirections = [Direction.Rise, Direction.Set]
-    iLimitDays = 1      
+    observer = Observer(location["lat"], location["long"], location["height"])
+    tz = location["tz"]
 
     for day in search_days:
-        # create target time for iDay
-        # check if between rise and set time
-        interval = {}
-        for elem in iDirections:
-            result = SearchRiseSet(body=iBody, observer=iObserver, 
-                        direction=elem, startTime=day, limitDays=iLimitDays)
-            result_utc = Time.Utc(result)
-            #print(elem, result_utc.astimezone(tz_pdt))
-            interval[elem] = result_utc
-
-        #print(interval)
+        # Build target wedding time (local and UTC)
         iDate = Time.Utc(day)
-        iYear = iDate.year
-        iDay = iDate.day
-        iMonth = iDate.month 
-        iSecond = 0 # dont care about sec
+        wedding_local = datetime(iDate.year, iDate.month, iDate.day, 
+                                  wedding["hour"], wedding["min"], tzinfo=tz)
+        wedding_utc = wedding_local.astimezone(timezone.utc)
 
-        wedding_time_pdt = datetime(iYear, iMonth, iDay, wedding["hour"], 
-                                    wedding["min"], tzinfo=location["tz"])
+        # Step 1: find most recent rise before wedding time
+        rise_time = SearchRiseSet(
+            body=iBody,
+            observer=observer,
+            direction=Direction.Rise,
+            startTime=day.AddDays(-1),
+            limitDays=3
+        )
+        rise_utc = Time.Utc(rise_time).astimezone(timezone.utc)
 
-        local_day = wedding_time_pdt.date()
-        confirm_date = f"{local_day.year}/{local_day.month}/{local_day.day}" 
+        # Step 2: find set after that rise
+        set_time = SearchRiseSet(
+            body=iBody,
+            observer=observer,
+            direction=Direction.Set,
+            startTime=rise_time,
+            limitDays=2
+        )
+        set_utc = Time.Utc(set_time).astimezone(timezone.utc)
 
-        if isBetween(wedding_time_pdt, 
-                     interval[Direction.Rise].astimezone(location["tz"]), 
-                     interval[Direction.Set].astimezone(location["tz"])):
-            
-            planet_set.add(confirm_date) 
+        #print(wedding_utc, rise_utc, set_utc)
+
+        # Step 3: is the planet up at wedding time?
+        if isBetween(wedding_utc, rise_utc, set_utc):
+            confirm_date = wedding_local.date().isoformat()
+            planet_set.add(confirm_date)
+            print(day, wedding_utc, rise_utc, set_utc)
 
     return planet_set
 
-# 9497: 1 Jan 2000 to 1 Jan 2026 
+# ---------------------------
+# CONFIGURATION
+# ---------------------------
+
+# Date range: Jan 1, 2026 → Jan 1, 2028
 YEAR = 365
-NEED_DAY = 9497
-END_DAY = NEED_DAY + 2*YEAR
+NEED_DAY = 9497  # corresponds to 2000-01-01 + 9497 = 2026-01-01
+END_DAY = NEED_DAY + 2 * YEAR
 
 search_days = [Time(x) for x in range(NEED_DAY, END_DAY)]
 
-tz_utc = timezone.utc
-
-
+# Target time of day (local)
 wedding = {"hour": 15, "min": 30}
 
-# LA
-tz_la = ZoneInfo('America/Los_Angeles')
-LA = {"lat":34.0522, "long":-118.2426, "height": 0, "tz":tz_la}
+# Location: Los Angeles
+tz_la = ZoneInfo("America/Los_Angeles")
+LA = {
+    "lat": 34.0522,
+    "long": -118.2426,
+    "height": 0,
+    "tz": tz_la
+}
 
+# ---------------------------
+# COMPUTATION
+# ---------------------------
 
-jupiter_set = planetDays(Body.Jupiter,location=LA, wedding=wedding)
-#print("jupiter ,", sorted(jupiter_set))
-print()
+jupiter_set = planetDays(Body.Jupiter, location=LA, wedding=wedding)
 saturn_set = planetDays(Body.Saturn, location=LA, wedding=wedding)
-#print("saturn, ", sorted(saturn_set))
-#print(saturn_set)
+both_visible = jupiter_set & saturn_set
 
-jupiter_saturn_set = jupiter_set.intersection(saturn_set)
+# ---------------------------
+# OUTPUT
+# ---------------------------
 
-[print(f"{elem}") for elem in sorted(jupiter_saturn_set)]
-    
+print("Dates Jupiter is visible at 15:30:")
+for date in sorted(jupiter_set):
+    print(date)
+
+print("\nDates Saturn is visible at 15:30:")
+for date in sorted(saturn_set):
+    print(date)
+
+print("\nDates BOTH are visible at 15:30:")
+for date in sorted(both_visible):
+    print(date)
+
