@@ -1,116 +1,35 @@
-'''
-Purpose: find date when Jupiter and Saturn are both in the sky
-         during the afternoon (15:30 local time)
+from skyfield.api import load, Topos
+from datetime import datetime
+from pytz import timezone
 
-Requirements:
-- Accurate rise/set visibility windows
-- DST-aware timezone handling
-- Ensure rise/set belong to the same cycle
+eph = load('de421.bsp')
+planets = [eph['JUPITER BARYCENTER'], eph['SATURN BARYCENTER']]
+ts = load.timescale()
 
-Returns:
-- Dates when Jupiter and Saturn are visible at 15:30
-- Individual visibility sets
-- Their intersection
-'''
+observer = Topos(
+    latitude_degrees=34.05,
+    longitude_degrees=-118.25
+)
 
-from astronomy import *
-from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+pacific = timezone('US/Pacific')
 
-def isBetween(cur, start, end):
-    """Check if `cur` is between `start` and `end`, accounting for overnight spans."""
-    if start <= end:
-        return start <= cur <= end
-    else:
-        return cur >= start or cur <= end
+t0 = ts.utc(2026, 1, 1)
+t1 = ts.utc(2028, 1, 1)
 
-def planetDays(iBody: Body, location: dict, wedding: dict) -> set:
-    planet_set = set()
 
-    observer = Observer(location["lat"], location["long"], location["height"])
-    tz = location["tz"]
+# find rise/set for all planets
+from skyfield.almanac import find_discrete, risings_and_settings
+for p in planets:
+    interval = []
+    f = risings_and_settings(eph, p, observer)
 
-    for day in search_days:
-        # Build target wedding time (local and UTC)
-        iDate = Time.Utc(day)
-        wedding_local = datetime(iDate.year, iDate.month, iDate.day, 
-                                  wedding["hour"], wedding["min"], tzinfo=tz)
-        wedding_utc = wedding_local.astimezone(timezone.utc)
+    #https://in-the-sky.org/whatsup_times.php
 
-        # Step 1: find most recent rise before wedding time
-        rise_time = SearchRiseSet(
-            body=iBody,
-            observer=observer,
-            direction=Direction.Rise,
-            startTime=day.AddDays(-1),
-            limitDays=3
-        )
-        rise_utc = Time.Utc(rise_time).astimezone(timezone.utc)
 
-        # Step 2: find set after that rise
-        set_time = SearchRiseSet(
-            body=iBody,
-            observer=observer,
-            direction=Direction.Set,
-            startTime=rise_time,
-            limitDays=2
-        )
-        set_utc = Time.Utc(set_time).astimezone(timezone.utc)
+    times, events = find_discrete(t0, t1, f)
+    for t, e in zip(times, events):
+        print(t.astimezone(pacific), "Rise" if e else "Set")
 
-        #print(wedding_utc, rise_utc, set_utc)
+    print()
 
-        # Step 3: is the planet up at wedding time?
-        if isBetween(wedding_utc, rise_utc, set_utc):
-            confirm_date = wedding_local.date().isoformat()
-            planet_set.add(confirm_date)
-            print(day, wedding_utc, rise_utc, set_utc)
-
-    return planet_set
-
-# ---------------------------
-# CONFIGURATION
-# ---------------------------
-
-# Date range: Jan 1, 2026 → Jan 1, 2028
-YEAR = 365
-NEED_DAY = 9497  # corresponds to 2000-01-01 + 9497 = 2026-01-01
-END_DAY = NEED_DAY + 2 * YEAR
-
-search_days = [Time(x) for x in range(NEED_DAY, END_DAY)]
-
-# Target time of day (local)
-wedding = {"hour": 15, "min": 30}
-
-# Location: Los Angeles
-tz_la = ZoneInfo("America/Los_Angeles")
-LA = {
-    "lat": 34.0522,
-    "long": -118.2426,
-    "height": 0,
-    "tz": tz_la
-}
-
-# ---------------------------
-# COMPUTATION
-# ---------------------------
-
-jupiter_set = planetDays(Body.Jupiter, location=LA, wedding=wedding)
-saturn_set = planetDays(Body.Saturn, location=LA, wedding=wedding)
-both_visible = jupiter_set & saturn_set
-
-# ---------------------------
-# OUTPUT
-# ---------------------------
-
-print("Dates Jupiter is visible at 15:30:")
-for date in sorted(jupiter_set):
-    print(date)
-
-print("\nDates Saturn is visible at 15:30:")
-for date in sorted(saturn_set):
-    print(date)
-
-print("\nDates BOTH are visible at 15:30:")
-for date in sorted(both_visible):
-    print(date)
 
